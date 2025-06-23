@@ -34,7 +34,7 @@ make api-run
 make api-stop
 ```
 
-The API will be available at `http://localhost:8080` by default.
+Remember to prepare the `.env` file before running the API. You can use the provided sample as a starting point. By default, the API will be available at `http://localhost:8080`.
 
 ## Testing
 
@@ -56,3 +56,5 @@ make test-cleanup
 # Run all integration tests (covers all commands above)
 make integration-test
 ```
+
+Before running the tests, ensure that the `.env.test` file is present. You can use the provided sample file.
