@@ -1,0 +1,20 @@
+# Dependency directories
+vendor/
+
+# Environment
+*.env
+.env.*
+env/
+
+.git
+.gitignore
+.DS_Store
+
+# Binaries and outputs
+*.out
+*.exe
+main
+
+# Editor
+.vscode/
+.idea/
