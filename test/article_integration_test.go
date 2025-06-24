@@ -2,75 +2,23 @@ package test
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
-	"runtime"
 	"testing"
+	"time"
 
 	"github.com/ariefsibuea/articles-feed/internal/api/handler"
 	"github.com/ariefsibuea/articles-feed/internal/api/repository"
 	"github.com/ariefsibuea/articles-feed/internal/api/usecase"
 
-	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/postgres"
-	_ "github.com/golang-migrate/migrate/v4/source/file"
-	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/suite"
+	_suite "github.com/stretchr/testify/suite"
 )
 
-type ArticleIntegrationTestSuite struct {
-	suite.Suite
-	dbpool *pgxpool.Pool
-	sqlDB  *sql.DB
-	echo   *echo.Echo
-	ctx    context.Context
-}
-
-func (suite *ArticleIntegrationTestSuite) SetupSuite() {
-	dbHost := getEnv("TEST_DB_HOST", "localhost")
-	dbPort := getEnv("TEST_DB_PORT", "5433")
-	dbUser := getEnv("TEST_DB_USER", "user_articles_feed_test")
-	dbPassword := getEnv("TEST_DB_PASSWORD", "pass_articles_feed_test")
-	dbName := getEnv("TEST_DB_NAME", "articles_feed_test")
-
-	dsn := fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", dbUser, dbPassword, dbHost, dbPort, dbName)
-
-	poolConfig, err := pgxpool.ParseConfig(dsn)
-	suite.Require().NoError(err)
-
-	poolConfig.MaxConns = 5
-	poolConfig.MinConns = 1
-
-	dbpool, err := pgxpool.NewWithConfig(context.Background(), poolConfig)
-	suite.Require().NoError(err)
-
-	suite.dbpool = dbpool
-	suite.ctx = context.Background()
-
-	suite.sqlDB = stdlib.OpenDBFromPool(dbpool)
-
-	suite.runMigrations()
-}
-
-func (suite *ArticleIntegrationTestSuite) TearDownSuite() {
-	if suite.sqlDB != nil {
-		suite.sqlDB.Close()
-	}
-	if suite.dbpool != nil {
-		suite.dbpool.Close()
-	}
-}
-
-func (suite *ArticleIntegrationTestSuite) SetupTest() {
+func (suite *ArticlesFeedTestSuite) SetupTest() {
 	suite.cleanupData()
 
 	e := echo.New()
@@ -85,11 +33,15 @@ func (suite *ArticleIntegrationTestSuite) SetupTest() {
 	suite.echo = e
 }
 
-func (suite *ArticleIntegrationTestSuite) TestCreateArticle_Success() {
+func TestArticlesFeed(t *testing.T) {
+	_suite.Run(t, new(ArticlesFeedTestSuite))
+}
+
+func (suite *ArticlesFeedTestSuite) TestCreateArticle_Success() {
 	payload := map[string]interface{}{
-		"title":      "Test Article",
-		"body":       "This is a test article body",
-		"authorName": "John Doe",
+		"title":      "Async Programming in Go",
+		"body":       "Understanding goroutines and channels.",
+		"authorName": "Evelyn Parker",
 	}
 
 	payloadBytes, err := json.Marshal(payload)
@@ -97,49 +49,170 @@ func (suite *ArticleIntegrationTestSuite) TestCreateArticle_Success() {
 
 	req := httptest.NewRequest(http.MethodPost, "/articles", bytes.NewReader(payloadBytes))
 	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
-
 	rec := httptest.NewRecorder()
 
 	suite.echo.ServeHTTP(rec, req)
+	assert.Equal(suite.T(), http.StatusCreated, rec.Code)
 
+	var createdArticle map[string]interface{}
+	err = json.Unmarshal(rec.Body.Bytes(), &createdArticle)
+	suite.Require().NoError(err)
+
+	isSuccess, _ := createdArticle["success"].(bool)
+	assert.True(suite.T(), isSuccess)
+	assert.NotNil(suite.T(), createdArticle["data"])
+
+	createdData, _ := createdArticle["data"].(map[string]interface{})
+	assert.NotEmpty(suite.T(), createdData["id"])
+}
+
+func (suite *ArticlesFeedTestSuite) TestGetArticles_Success() {
+	suite.seedArticlesAndAuthors()
+
+	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+
+	suite.echo.ServeHTTP(rec, req)
 	assert.Equal(suite.T(), http.StatusOK, rec.Code)
-}
 
-func (suite *ArticleIntegrationTestSuite) cleanupData() {
-	_, err := suite.dbpool.Exec(suite.ctx, "delete from articles")
+	var getResponse map[string]interface{}
+	err := json.Unmarshal(rec.Body.Bytes(), &getResponse)
 	suite.Require().NoError(err)
 
-	_, err = suite.dbpool.Exec(suite.ctx, "delete from authors")
+	isSuccess, _ := getResponse["success"].(bool)
+	assert.True(suite.T(), isSuccess)
+	assert.NotNil(suite.T(), getResponse["data"])
+	assert.NotNil(suite.T(), getResponse["meta"])
+
+	meta, _ := getResponse["meta"].(map[string]interface{})
+	totalItems, _ := meta["totalItems"].(float64)
+	assert.Equal(suite.T(), float64(4), totalItems)
+
+	data, _ := getResponse["data"].(map[string]interface{})
+	assert.NotNil(suite.T(), data["articles"])
+	articles, _ := data["articles"].([]interface{})
+	assert.Equal(suite.T(), 4, len(articles))
+}
+
+func (suite *ArticlesFeedTestSuite) TestGetArticlesWithPage_Success() {
+	suite.seedArticlesAndAuthors()
+
+	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+
+	queryParam := req.URL.Query()
+	queryParam.Add("page", "1")
+	queryParam.Add("pageSize", "2")
+	req.URL.RawQuery = queryParam.Encode()
+
+	suite.echo.ServeHTTP(rec, req)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var getResponse map[string]interface{}
+	err := json.Unmarshal(rec.Body.Bytes(), &getResponse)
+	suite.Require().NoError(err)
+
+	isSuccess, _ := getResponse["success"].(bool)
+	assert.True(suite.T(), isSuccess)
+	assert.NotNil(suite.T(), getResponse["data"])
+	assert.NotNil(suite.T(), getResponse["meta"])
+
+	meta, _ := getResponse["meta"].(map[string]interface{})
+	totalItems, _ := meta["totalItems"].(float64)
+	assert.Equal(suite.T(), float64(4), totalItems)
+
+	data, _ := getResponse["data"].(map[string]interface{})
+	assert.NotNil(suite.T(), data["articles"])
+	articles, _ := data["articles"].([]interface{})
+	assert.Equal(suite.T(), 2, len(articles))
+}
+
+func (suite *ArticlesFeedTestSuite) TestGetArticlesWithSearch_Success() {
+	suite.seedArticlesAndAuthors()
+
+	req := httptest.NewRequest(http.MethodGet, "/articles", nil)
+	req.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
+	rec := httptest.NewRecorder()
+
+	queryParam := req.URL.Query()
+	queryParam.Add("query", "PostgreSQL")
+	req.URL.RawQuery = queryParam.Encode()
+
+	suite.echo.ServeHTTP(rec, req)
+	assert.Equal(suite.T(), http.StatusOK, rec.Code)
+
+	var getResponse map[string]interface{}
+	err := json.Unmarshal(rec.Body.Bytes(), &getResponse)
+	suite.Require().NoError(err)
+
+	isSuccess, _ := getResponse["success"].(bool)
+	assert.True(suite.T(), isSuccess)
+	assert.NotNil(suite.T(), getResponse["data"])
+	assert.NotNil(suite.T(), getResponse["meta"])
+
+	meta, _ := getResponse["meta"].(map[string]interface{})
+	totalItems, _ := meta["totalItems"].(float64)
+	assert.Equal(suite.T(), float64(1), totalItems)
+
+	data, _ := getResponse["data"].(map[string]interface{})
+	assert.NotNil(suite.T(), data["articles"])
+	articles, _ := data["articles"].([]interface{})
+	assert.Equal(suite.T(), 1, len(articles))
+}
+
+func (suite *ArticlesFeedTestSuite) seedArticlesAndAuthors() {
+	authors := map[string]uuid.UUID{
+		"Alice Smith": uuid.New(),
+		"Bob Johnson": uuid.New(),
+		"Charlie Lee": uuid.New(),
+		"Dana White":  uuid.New(),
+	}
+
+	query := `
+		INSERT INTO authors (author_uuid, name)
+		VALUES
+			($1, $2),
+			($3, $4),
+			($5, $6),
+			($7, $8)
+	`
+
+	args := []interface{}{
+		authors["Alice Smith"], "Alice Smith",
+		authors["Bob Johnson"], "Bob Johnson",
+		authors["Charlie Lee"], "Charlie Lee",
+		authors["Dana White"], "Dana White",
+	}
+
+	_, err := suite.dbpool.Exec(suite.ctx, query, args...)
+	suite.Require().NoError(err)
+
+	query = `
+		INSERT INTO articles (article_uuid, author_uuid, title, body, created_at)
+		VALUES
+			($1, $2, $3, $4, $5),
+			($6, $7, $8, $9, $10),
+			($11, $12, $13, $14, $15),
+			($16, $17, $18, $19, $20)
+	`
+
+	args = []interface{}{
+		uuid.New(), authors["Alice Smith"], "Introduction to Go", "A quick start guide to Go.", time.Now().UTC(),
+		uuid.New(), authors["Bob Johnson"], "Understanding REST APIs", "Learn the basics of RESTful services.", time.Now().UTC(),
+		uuid.New(), authors["Charlie Lee"], "Testing in Go", "How to write unit and integration tests.", time.Now().UTC(),
+		uuid.New(), authors["Dana White"], "Working with PostgreSQL", "Connecting Go with PostgreSQL.", time.Now().UTC(),
+	}
+
+	_, err = suite.dbpool.Exec(suite.ctx, query, args...)
 	suite.Require().NoError(err)
 }
 
-func (suite *ArticleIntegrationTestSuite) runMigrations() {
-	_, b, _, _ := runtime.Caller(0)
-	basepath := filepath.Dir(filepath.Dir(b))
-	migrationPath := "file://" + filepath.Join(basepath, "migrations")
+func (suite *ArticlesFeedTestSuite) cleanupData() {
+	_, err := suite.dbpool.Exec(suite.ctx, "TRUNCATE TABLE articles RESTART IDENTITY")
+	suite.Require().NoError(err)
 
-	driver, err := postgres.WithInstance(suite.sqlDB, &postgres.Config{})
-	suite.Require().NoError(err, "failed to create postgres driver")
-
-	m, err := migrate.NewWithDatabaseInstance(migrationPath, "postgres", driver)
-	suite.Require().NoError(err, "failed to create database instance")
-
-	if err := m.Up(); err != migrate.ErrNoChange {
-		suite.Require().NoError(err, "failed to run migrations")
-	}
-
-	sourceErr, dbErr := m.Close()
-	suite.Require().NoError(sourceErr, "failed to close source")
-	suite.Require().NoError(dbErr, "failed to close database")
-}
-
-func getEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
-}
-
-func TestArticleIntegrationTestSuite(t *testing.T) {
-	suite.Run(t, new(ArticleIntegrationTestSuite))
+	_, err = suite.dbpool.Exec(suite.ctx, "TRUNCATE TABLE authors RESTART IDENTITY")
+	suite.Require().NoError(err)
 }

@@ -28,7 +28,7 @@ To start and stop the API, use the following commands:
 
 ```bash
 # Run the API server
-make api-run
+make api-start
 
 # Stop and cleanup resources
 make api-stop
@@ -46,9 +46,9 @@ Remember to prepare the `.env` file before running the API. You can use the prov
 
     ```json
     {
-        "title": "Article Title",
-        "body": "Article content goes here.",
-        "authorName": "John Doe"
+        "title": "Async Programming in Go",
+        "body": "Understanding goroutines and channels.",
+        "authorName": "Evelyn Parker"
     }
     ```
 
@@ -60,10 +60,10 @@ Remember to prepare the `.env` file before running the API. You can use the prov
             "success": true,
             "data": {
                 "id": "acdb113a-60ae-4643-92c7-2d15f675b3f5",
-                "title": "Article Title",
-                "body": "Article content goes here.",
+                "title": "Async Programming in Go",
+                "body": "Understanding goroutines and channels.",
                 "createdAt": "2025-06-23T11:14:55Z",
-                "authorName": "John Doe"
+                "authorName": "Evelyn Parker"
             },
             "meta": {}
         }
@@ -86,10 +86,10 @@ Remember to prepare the `.env` file before running the API. You can use the prov
                 "articles": [
                     {
                         "id": "acdb113a-60ae-4643-92c7-2d15f675b3f5",
-                        "title": "Article Title",
-                        "body": "Article content goes here.",
+                        "title": "Async Programming in Go",
+                        "body": "Understanding goroutines and channels.",
                         "created_at": "2025-06-23T11:14:55Z",
-                        "authorName": "John Doe"
+                        "authorName": "Evelyn Parker"
                     }
                 ]
             },
@@ -121,7 +121,7 @@ make test-run
 make test-cleanup
 
 # Run all integration tests (covers all commands above)
-make integration-test
+make test-integration
 ```
 
 Before running the tests, ensure that the `.env.test` file is present. You can use the provided sample file.
